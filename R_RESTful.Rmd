@@ -1,0 +1,97 @@
+---
+title: "R_RESTful using opencpu"
+author: "JuMingXing"
+date: "2016年12月20日"
+output: html_document
+---
+## R RESTful API based on opencpu 
+R语言是一门统计分析与可视化的优秀的开源软件，利用R语言建模后大致有三种使用方式：
+1、形成简单的分析报告；
+2、离线模型：将模型预测结果存入数据库；
+3、线上实时获取数据进行预测输出
+第一种利用Rmarkdwon与配置文件很容易实现标准分析报告，第二种可以将结果直接存入MySQL或者MongoDB，但是第三种是比较困难实现也是建模最重要的用途。这里利用opencpu实现RESTful API微服务，基于HTTP请求的方式来实现跨平台的模型预测功能。
+
+### Install OpenCpu and R package opencpu
+```{r, echo=TRUE, eval = FALSE, message=FALSE, warning=FALSE}
+# Install opencpu on your own ubuntu system
+sudo gedit /etc/apt/sources.list
+# paste below
+deb http://ppa.launchpad.net/opencpu/opencpu-1.6/ubuntu trusty main
+deb-src http://ppa.launchpad.net/opencpu/opencpu-1.6/ubuntu trusty main
+# save and run
+sudo apt-get update
+sudo apt-get install opencpu
+# Install R packages opencpu
+install.packages('opencpu')
+```
+
+### Demo 
+利用iris数据来做一个xgboost预测模型，并将模型结果保存
+```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+require(caret)
+data("iris")
+controlObject = trainControl (
+  method = 'cv',
+  number = 10,
+  selectionFunction = 'oneSE',
+  search = "grid",
+  classProbs = TRUE
+)
+xgBoostGrid = expand.grid(
+  .nrounds = c(25, 50),
+  .eta = c(0.01, 0.1, 0.5, 1),
+  .max_depth = c(2, 4, 6, 8),
+  .gamma = c(1, 2, 5),
+  .colsample_bytree = c(0.5, 0.75, 1),
+  .min_child_weight = c(10, 50, 100)
+)
+model = train(
+  Species ~ .,
+  iris,
+  method = 'xgbTree',
+  trControl = controlObject,
+  tuneGrid = xgBoostGrid,
+  objective = "multi:softmax",
+  metric = 'Accuracy'
+)
+save(model, file = './model/model.rda')
+# 利用RStudio创建包test
+# create new project -> new Directory -> R Package
+# 在test文件夹中创建model文件夹，并将model.rda移到model文件中
+# 在test/R文件中创建预测函数
+require(caret)
+predfunc = function(input) {
+  input = as.data.frame(input)
+  load('./model/model.rda')
+  result = predict(model, newdata = input)
+  as.character(result)
+}
+# 利用Rstudio中的bulid&reload（或者快捷键'Ctrl + Shift + B'）创建并加载test包
+# 在本地启opencpu的服务
+# 终端输入 R
+library(opencpu)
+Initiating OpenCPU server...
+Using config: /home/jmx/.opencpu.conf
+OpenCPU started.
+[httpuv] http://localhost:1923/ocpu
+OpenCPU single-user server ready.
+# 在另一终端输入：
+curl http://172.16.33.22:1923/ocpu/library/test/R/predfunc/json -H "Content-Type: application/json" -d '{"input" :[{"Sepal.Length":1.1, "Sepal.Width" : 2.5, "Petal.Length":0.4, "Petal.Width":0.9}]}'
+```
+
+### Test Result
+
+```{r echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# 用语言自身进行调用RESTful API
+require(httr)
+url = "http://172.16.33.22:1923/ocpu/library/test/R/predfunc/json"
+input = '{\"input\" :[{\"Sepal.Length\":1.1, \"Sepal.Width\" : 2.5, \"Petal.Length\":0.4, \"Petal.Width\":0.9}]}'
+POST(
+url = url,
+body = input,
+encode = 'json',
+content_type('application/json')
+)
+```
+
+
